@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+<meta name="referrer" content="no-referrer">
+<title>Timeline — song year guessing game</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2214%22 fill=%22%237c5cff%22/%3E%3Cpath d=%22M16 7v9l6 4%22 stroke=%22%23fff%22 stroke-width=%223%22 fill=%22none%22 stroke-linecap=%22round%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">◴</span>
+    <div>
+      <h1>Timeline</h1>
+      <p class="tagline">Place the song on the right side of history</p>
+    </div>
+  </div>
+  <div class="stats" id="stats" role="status" aria-live="polite">
+    <div class="stat"><span class="stat-val" id="stat-cards">0</span><span class="stat-lab">cards</span></div>
+    <div class="stat"><span class="stat-val" id="stat-tokens">0</span><span class="stat-lab">tokens</span></div>
+    <div class="stat"><span class="stat-val" id="stat-round">0</span><span class="stat-lab">round</span></div>
+    <div class="stat"><span class="stat-val" id="stat-streak">0</span><span class="stat-lab">streak</span></div>
+  </div>
+  <div class="topbar-actions">
+    <span class="room-pill" id="room-pill" hidden>Room <b id="room-pill-code"></b></span>
+    <button class="btn btn-ghost btn-sm" id="btn-settings" aria-haspopup="dialog">Settings</button>
+    <button class="btn btn-ghost btn-sm" id="btn-restart">Leave</button>
+  </div>
+</header>
+
+<!-- ─────────────────────── Mode picker ─────────────────────── -->
+<main id="screen-mode" class="screen">
+  <section class="setup-card">
+    <h2>Timeline</h2>
+    <p class="muted">Hear a clip, guess where it sits in history. Play on your own,
+      or get everyone in the room on their own phone.</p>
+
+    <div class="mode-grid">
+      <button class="mode-btn" id="btn-solo">
+        <span class="mode-ico" aria-hidden="true">♪</span>
+        <b>Play solo</b>
+        <small>Just you and the deck</small>
+      </button>
+      <button class="mode-btn mode-btn-alt" id="btn-multi">
+        <span class="mode-ico" aria-hidden="true">👥</span>
+        <b>Play with friends</b>
+        <small>Everyone joins with a room code</small>
+      </button>
+    </div>
+    <p class="fineprint" id="setup-fineprint">Loading songs&hellip;</p>
+  </section>
+</main>
+
+<!-- ─────────────────────── Join / create ─────────────────────── -->
+<main id="screen-join" class="screen" hidden>
+  <section class="setup-card">
+    <h2>Play with friends</h2>
+    <p class="muted">Everyone opens this same link on their own device and uses the
+      same room code.</p>
+
+    <label class="field">
+      <span>Your name</span>
+      <input type="text" id="in-name" maxlength="16" autocomplete="nickname"
+             spellcheck="false" placeholder="e.g. Conor">
+    </label>
+
+    <div class="join-split">
+      <div class="join-col">
+        <button class="btn btn-primary btn-lg" id="btn-create">Start a new room</button>
+        <small class="muted">You'll get a code to read out</small>
+      </div>
+      <div class="join-or"><span>or</span></div>
+      <div class="join-col">
+        <label class="field">
+          <span>Join a room</span>
+          <input type="text" id="in-code" maxlength="6" autocapitalize="characters"
+                 autocomplete="off" spellcheck="false" placeholder="CODE" class="code-input">
+        </label>
+        <button class="btn btn-lg" id="btn-join">Join</button>
+      </div>
+    </div>
+
+    <p class="form-error" id="join-error" hidden></p>
+    <button class="btn btn-ghost btn-sm" id="btn-back-mode">Back</button>
+  </section>
+</main>
+
+<!-- ─────────────────────────── Lobby ─────────────────────────── -->
+<main id="screen-lobby" class="screen" hidden>
+  <section class="setup-card setup-wide">
+    <h2>Room <span class="code-big" id="lobby-code">----</span></h2>
+    <p class="muted">Send this code to everyone. They open the same link, tap
+      <em>Play with friends</em>, and type it in.</p>
+    <button class="btn btn-ghost btn-sm" id="btn-copy-link">Copy the link</button>
+
+    <ul class="lobby-players" id="lobby-players"></ul>
+
+    <div class="setup-fields" id="lobby-settings">
+      <label class="field">
+        <span>Cards needed to win</span>
+        <select id="opt-target">
+          <option value="5">5 &mdash; quick</option>
+          <option value="10" selected>10 &mdash; standard</option>
+          <option value="15">15 &mdash; long</option>
+          <option value="0">No limit</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Naming the song</span>
+        <select id="opt-naming">
+          <option value="on" selected>Ask for title &amp; artist (tokens)</option>
+          <option value="off">Timeline only</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="lobby-actions">
+      <button class="btn btn-lg" id="btn-ready">I'm ready</button>
+      <button class="btn btn-primary btn-lg" id="btn-begin" hidden>Begin</button>
+    </div>
+    <p class="fineprint" id="lobby-note">Waiting for players&hellip;</p>
+    <button class="btn btn-ghost btn-sm" id="btn-leave-lobby">Leave room</button>
+  </section>
+</main>
+
+<!-- ─────────────────── Solo: the dealt first card ─────────────────── -->
+<main id="screen-setup" class="screen" hidden>
+  <section class="setup-card">
+    <h2>Your first song</h2>
+    <p class="muted">You are dealt one song, free, with its year showing. Every song after
+      that you have to place yourself &mdash; before it, after it, and then in between
+      everything else on your timeline.</p>
+    <div class="deal-stage" id="deal-stage">
+      <div class="deal-placeholder" id="deal-placeholder"><span class="deal-note">?</span></div>
+    </div>
+    <div class="setup-fields">
+      <label class="field">
+        <span>Cards needed to win</span>
+        <select id="opt-target-solo">
+          <option value="5">5 &mdash; quick</option>
+          <option value="10" selected>10 &mdash; standard</option>
+          <option value="15">15 &mdash; long</option>
+          <option value="0">No limit</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Naming the song</span>
+        <select id="opt-naming-solo">
+          <option value="on" selected>Ask for title &amp; artist (tokens)</option>
+          <option value="off">Timeline only</option>
+        </select>
+      </label>
+    </div>
+    <button class="btn btn-primary btn-lg" id="btn-start">Deal my first song</button>
+    <button class="btn btn-ghost btn-sm" id="btn-back-mode2">Back</button>
+  </section>
+</main>
+
+<!-- ─────────────────────────── Game ─────────────────────────── -->
+<main id="screen-game" class="screen" hidden>
+
+  <section class="board-strip" id="leaderboard-wrap" hidden aria-label="Scores">
+    <ol class="leaderboard" id="leaderboard"></ol>
+  </section>
+
+  <section class="timeline-wrap" aria-label="Timeline">
+    <div class="timeline-head">
+      <h2 id="timeline-owner">Your timeline</h2>
+      <p class="hint" id="timeline-hint">Listen, then click the gap where the song belongs.</p>
+    </div>
+    <div class="timeline-scroll">
+      <div class="timeline" id="timeline"></div>
+    </div>
+  </section>
+
+  <section class="round-panel">
+    <div class="player">
+      <button class="play-btn" id="btn-play" aria-label="Play the song">
+        <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+        <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.5h3.2v13H7.5zM13.3 5.5h3.2v13h-3.2z"/></svg>
+      </button>
+      <div class="player-meta">
+        <div class="player-label" id="player-label">Round 1 &mdash; press play</div>
+        <div class="scrubber" id="scrubber" aria-hidden="true"><div class="scrub-fill" id="scrub-fill"></div></div>
+        <div class="player-sub" id="player-sub">30-second preview</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="btn-replay" title="Restart the preview">Replay</button>
+    </div>
+
+    <div class="guess-area" id="guess-area">
+      <div class="slot-status" id="slot-status">No gap chosen yet</div>
+      <div class="naming" id="naming">
+        <label class="field">
+          <span>Song title <em>(optional &mdash; earns a token)</em></span>
+          <input type="text" id="in-title" autocomplete="off" spellcheck="false" placeholder="e.g. Blinding Lights">
+        </label>
+        <label class="field">
+          <span>Artist <em>(optional)</em></span>
+          <input type="text" id="in-artist" autocomplete="off" spellcheck="false" placeholder="e.g. The Weeknd">
+        </label>
+      </div>
+      <button class="btn btn-primary btn-lg" id="btn-submit" disabled>Submit</button>
+      <button class="btn btn-ghost btn-sm" id="btn-skip" hidden>Skip their turn</button>
+      <p class="fineprint" id="round-fineprint">Tip: <kbd>Space</kbd> play/pause &middot; <kbd>Enter</kbd> submit</p>
+    </div>
+  </section>
+</main>
+
+<!-- ─────────────────────── Reveal ─────────────────────── -->
+<div class="overlay" id="overlay" hidden role="dialog" aria-modal="true" aria-labelledby="rv-title">
+  <div class="reveal" id="reveal">
+    <div class="reveal-art"><img id="rv-art" alt="" width="200" height="200"></div>
+    <div class="reveal-body">
+      <div class="rv-who" id="rv-who" hidden></div>
+      <div class="rv-year" id="rv-year">1984</div>
+      <h3 class="rv-title" id="rv-title">Song</h3>
+      <p class="rv-artist" id="rv-artist">Artist</p>
+      <p class="rv-album" id="rv-album"></p>
+      <ul class="verdicts" id="verdicts"></ul>
+      <div class="reveal-actions">
+        <button class="btn btn-count" id="btn-count" hidden>Close enough &mdash; count mine as correct</button>
+        <button class="btn btn-primary btn-lg" id="btn-next">Next song</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────────────────── Game over ─────────────────────── -->
+<div class="overlay" id="overlay-end" hidden role="dialog" aria-modal="true" aria-labelledby="end-title">
+  <div class="endcard">
+    <h2 id="end-title">Timeline complete</h2>
+    <div class="end-stats" id="end-stats"></div>
+    <button class="btn btn-primary btn-lg" id="btn-again">Play again</button>
+  </div>
+</div>
+
+<!-- ─────────────────────── Settings ─────────────────────── -->
+<div class="overlay" id="overlay-settings" hidden role="dialog" aria-modal="true" aria-labelledby="set-title">
+  <div class="endcard">
+    <h2 id="set-title">Settings</h2>
+    <label class="field">
+      <span>Preview length</span>
+      <select id="opt-preview-len">
+        <option value="0">Full 30 seconds</option>
+        <option value="15">15 seconds</option>
+        <option value="7">7 seconds (hard)</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Volume</span>
+      <input type="range" id="opt-volume" min="0" max="1" step="0.01" value="0.8">
+    </label>
+    <label class="field">
+      <span>Naming strictness</span>
+      <select id="opt-strict">
+        <option value="0.82" selected>Forgiving (typos ok)</option>
+        <option value="0.95">Strict</option>
+      </select>
+    </label>
+    <p class="fineprint">These are yours alone — they change how this device plays,
+      not the room.</p>
+    <button class="btn btn-primary" id="btn-close-settings">Done</button>
+  </div>
+</div>
+
+<audio id="audio" preload="none"></audio>
+
+<script src="songs.js"></script>
+<script type="module" src="app.js"></script>
+<script>
+/* Browsers refuse to load ES modules from file:// , so say so plainly
+   instead of leaving a dead button on the page. */
+window.addEventListener("load", function () {
+  setTimeout(function () {
+    if (document.body.dataset.booted) return;
+    var fp = document.getElementById("setup-fineprint");
+    var file = location.protocol === "file:";
+    fp.innerHTML = file
+      ? "<strong>Open this through a web server, not as a file.</strong> Run "
+        + "<code>./run.sh</code> in the project folder — browsers block page "
+        + "scripts loaded straight from your disk."
+      : "<strong>The page could not start.</strong> Check the browser console.";
+    document.getElementById("btn-solo").disabled = true;
+    document.getElementById("btn-multi").disabled = true;
+  }, 600);
+});
+</script>
+</body>
+</html>
