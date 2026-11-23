@@ -120,6 +120,24 @@ export class Room {
     await this._attach();
   }
 
+  /** Read the room once, without joining or announcing ourselves. */
+  async inspect() {
+    const { api } = await sdk();
+    const snap = await api.get(await this._ref());
+    return snap.val();
+  }
+
+  /** Continue as a particular player — used when rejoining a game in progress. */
+  setIdentity(id) {
+    this.playerId = id;
+    try { localStorage.setItem("timeline.playerId", id); } catch (_) {}
+  }
+
+  /** Start watching the room as whoever we currently are. */
+  async attach() { await this._attach(); }
+
+  stale(cur) { return Date.now() - (cur.createdAt || 0) > ROOM_TTL_MS; }
+
   /** Join an existing room. */
   async join(name) {
     const { api } = await sdk();
@@ -153,7 +171,8 @@ export class Room {
   async _attach() {
     const { api } = await sdk();
     const me = await this._ref(`players/${this.playerId}/online`);
-    api.onDisconnect(me).set(false);
+    this._onDisc = api.onDisconnect(me);
+    this._onDisc.set(false);
     await api.set(me, true);
 
     const ref = await this._ref();
@@ -182,16 +201,29 @@ export class Room {
     return res && res.snapshot ? res.snapshot.val() : null;
   }
 
+  /** Leaving on purpose, with the page still alive: cancel the drop handler
+   *  (so it cannot fire later and recreate a removed room as a stray
+   *  fragment) and write the offline flag ourselves. */
   async leave() {
     try {
       const { api } = await sdk();
+      if (this._onDisc) { try { await this._onDisc.cancel(); } catch (_) {} }
       await api.update(await this._ref(`players/${this.playerId}`), { online: false });
     } catch (_) {}
     this.close();
   }
 
+  /** The page is going away (refresh, tab close, navigation). Leave the drop
+   *  handler armed — it is the only thing that will reliably mark us offline,
+   *  since an async write here is unlikely to finish before teardown. */
+  detach() {
+    if (this._off) { this._off(); this._off = null; }
+    this.listeners.clear();
+  }
+
   close() {
     if (this._off) { this._off(); this._off = null; }
+    this._onDisc = null;
     this.listeners.clear();
   }
 }

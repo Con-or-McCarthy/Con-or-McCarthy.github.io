@@ -17,11 +17,50 @@ const vals = o => Object.values(o || {});
 const intOr = (v, fallback) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : fallback; };
 const numOr = (v, fallback) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fallback; };
 
-/* ─────────────────────────── songs ─────────────────────────── */
-const SONGS = (window.SONG_DATA || []).filter(s => s && s.year && (s.preview || s.dz));
-const BY_ID = new Map(SONGS.map(s => [s.id, s]));
-const SONG_MIN = SONGS.length ? Math.min(...SONGS.map(s => s.year)) : 1980;
-const SONG_MAX = SONGS.length ? Math.max(...SONGS.map(s => s.year)) : 2025;
+/* ─────────────────────────── songs ───────────────────────────
+   The data file holds more than one deck — English-language hits and
+   Spanish-language ones — and a game plays whichever its settings name.
+   Cards are looked up across all of them, so a game already under way
+   still renders if the setting changes underneath it. */
+const ALL_SONGS = (window.SONG_DATA || []).filter(s => s && s.year && (s.preview || s.dz));
+const BY_ID = new Map(ALL_SONGS.map(s => [s.id, s]));
+
+const BANK_LABELS = { en: "English-language hits", es: "Spanish-language hits" };
+const DEFAULT_BANK = "en";
+
+/** Every deck there are songs for, in a fixed order, with a line about each. */
+const BANKS = Object.keys(BANK_LABELS)
+  .map(id => {
+    const songs = ALL_SONGS.filter(s => (s.bank || DEFAULT_BANK) === id);
+    if (!songs.length) return null;
+    const years = songs.map(s => s.year);
+    return { id, label: BANK_LABELS[id], songs,
+             min: Math.min(...years), max: Math.max(...years),
+             years: new Set(years).size };
+  })
+  .filter(Boolean);
+
+const bankOr = id => BANKS.find(b => b.id === id) || BANKS.find(b => b.id === DEFAULT_BANK) || BANKS[0];
+/** The deck this game is playing. */
+const songsFor = id => (bankOr(id) || { songs: [] }).songs;
+const gameBank = () => (G && G.settings && G.settings.bank) || DEFAULT_BANK;
+const SONGS = songsFor(DEFAULT_BANK);
+
+/** Fill a <select> with the decks on offer, and remember the last choice. */
+const BANK_PREF_KEY = "timeline.bank.v1";
+function fillBankSelect(sel, chosen) {
+  if (!sel) return;
+  sel.innerHTML = "";
+  for (const b of BANKS) {
+    const o = document.createElement("option");
+    o.value = b.id;
+    o.textContent = `${b.label} — ${b.songs.length} songs, ${b.min}–${b.max}`;
+    sel.appendChild(o);
+  }
+  sel.value = chosen || P.bank || DEFAULT_BANK;
+  if (!sel.value) sel.value = (BANKS[0] || {}).id || DEFAULT_BANK;
+  sel.parentElement.hidden = BANKS.length < 2;
+}
 
 /* ──────────────── this device's own preferences ──────────────── */
 const PREFS_KEY = "timeline.prefs.v1";
@@ -84,14 +123,16 @@ async function mutate(fn) {
 }
 
 /* ─────────────────────────── screens ─────────────────────────── */
-const SCREENS = ["screen-mode", "screen-join", "screen-lobby", "screen-setup", "screen-game"];
+const SCREENS = ["screen-mode", "screen-join", "screen-rejoin", "screen-lobby",
+                 "screen-setup", "screen-game"];
 function show(id) {
   for (const s of SCREENS) $(s).hidden = s !== id;
   $("stats").hidden = id !== "screen-game";
   $("room-pill").hidden = !multiplayer();
   $("btn-restart").textContent = multiplayer() ? "Leave" : "New game";
-  $("btn-restart").hidden = id === "screen-mode" || id === "screen-join";
-  $("btn-settings").hidden = id === "screen-mode" || id === "screen-join";
+  const preGame = ["screen-mode", "screen-join", "screen-rejoin"].includes(id);
+  $("btn-restart").hidden = preGame;
+  $("btn-settings").hidden = preGame;
 }
 
 /* ═══════════════════════════ SOLO ═══════════════════════════ */
@@ -200,12 +241,174 @@ async function joinRoom() {
     const n = await needNet();
     myId = n.makePlayerId(); myName = name;
     const r = new n.Room(code, myId);
-    await r.join(name);
-    attachRoom(r);
+
+    // Look at the room before announcing ourselves, so a game already running
+    // can offer the choice of coming in fresh or taking over a dropped player.
+    const state = await r.inspect();
+    if (!state) throw new Error(`No room called ${code}.`);
+    if (r.stale(state)) throw new Error(`Room ${code} has expired.`);
+
+    if (state.phase === "lobby" || (state.players || {})[myId]) {
+      await r.join(name);          // the lobby, or simply us reconnecting
+      attachRoom(r);
+      return;
+    }
+    pendingJoin = { room: r, state, name };
+    showRejoinChoice();
   } catch (err) {
     joinError(friendly(err));
   } finally {
     setBusy(false);
+  }
+}
+
+/* ───────── coming into a game that has already started ───────── */
+let pendingJoin = null;
+let rejoinPoll = null;
+
+const droppedPlayers = state =>
+  vals(state && state.players).filter(p => !p.online).sort((a, b) => a.order - b.order);
+
+function rejoinError(msg) {
+  const e = $("rejoin-error");
+  e.hidden = !msg;
+  e.textContent = msg || "";
+}
+
+function showRejoinChoice() {
+  const { room: r } = pendingJoin;
+  $("rejoin-code").textContent = r.code;
+  $("rejoin-list-wrap").hidden = true;
+  $("rejoin-choice").hidden = false;
+  rejoinError("");
+  paintRejoinCount();
+  show("screen-rejoin");
+  startRejoinPoll();
+}
+
+function paintRejoinCount() {
+  const dropped = droppedPlayers(pendingJoin.state);
+  $("btn-rejoin-pick").disabled = dropped.length === 0;
+  $("rejoin-count").textContent = dropped.length
+    ? `${dropped.length} player${dropped.length > 1 ? "s" : ""} dropped out — continue as one of them`
+    : "Nobody has dropped out — waiting…";
+}
+
+/** Keep the screen live: a player who has just refreshed takes a second or two
+ *  to show as offline, so poll rather than freezing a stale snapshot. */
+function startRejoinPoll() {
+  stopRejoinPoll();
+  rejoinPoll = setInterval(async () => {
+    if (!pendingJoin || $("screen-rejoin").hidden) return stopRejoinPoll();
+    try {
+      const fresh = await pendingJoin.room.inspect();
+      if (!fresh || !pendingJoin) return;
+      pendingJoin.state = fresh;
+      if (fresh.phase === "lobby") {        // they went back to the lobby
+        const r = pendingJoin.room;
+        stopRejoinPoll(); pendingJoin = null;
+        await r.join($("in-name").value.trim() || "Player");
+        attachRoom(r);
+        return;
+      }
+      if ($("rejoin-list-wrap").hidden) paintRejoinCount();
+      else paintRejoinList();
+    } catch (_) {}
+  }, 2500);
+}
+
+function stopRejoinPoll() {
+  if (rejoinPoll) { clearInterval(rejoinPoll); rejoinPoll = null; }
+}
+
+function showRejoinList() {
+  paintRejoinList();
+  $("rejoin-choice").hidden = true;
+  $("rejoin-list-wrap").hidden = false;
+  startRejoinPoll();
+}
+
+function paintRejoinList() {
+  const { state } = pendingJoin;
+  const stored = (() => { try { return localStorage.getItem("timeline.playerId"); } catch (_) { return null; } })();
+  const ul = $("rejoin-list");
+  const dropped = droppedPlayers(state);
+  ul.innerHTML = "";
+  for (const p of dropped) {
+    const li = el("li", "lobby-player rejoin-option");
+    const btn = el("button", "rejoin-btn");
+    btn.type = "button";
+    btn.appendChild(el("span", "lp-name", p.name + (p.id === stored ? " (you)" : "")));
+    const nc = Math.max(0, vals(p.cards).length - 1), nt = p.tokens || 0;
+    btn.appendChild(el("span", "lp-state",
+      `${nc} card${nc === 1 ? "" : "s"} · ${nt} token${nt === 1 ? "" : "s"}`));
+    btn.addEventListener("click", () => rejoinAs(p.id));
+    li.appendChild(btn);
+    ul.appendChild(li);
+  }
+  $("rejoin-empty").hidden = dropped.length > 0;
+}
+
+/** Take over a player who dropped out, keeping their cards and tokens. */
+async function rejoinAs(playerId) {
+  const { room: r } = pendingJoin;
+  rejoinError("");
+  try {
+    const fresh = await r.inspect();
+    const p = (fresh && fresh.players && fresh.players[playerId]) || null;
+    if (!p) throw new Error("That player is no longer in the game.");
+    if (p.online) throw new Error(`${p.name} has already come back — pick someone else.`);
+    stopRejoinPoll();
+    r.setIdentity(playerId);
+    myId = playerId;
+    myName = p.name;
+    await r.attach();
+    pendingJoin = null;
+    attachRoom(r, { skipLobbyScreen: true });
+  } catch (err) {
+    rejoinError(friendly(err));
+    pendingJoin.state = await pendingJoin.room.inspect();
+    showRejoinList();
+  }
+}
+
+/** Come in as somebody new, mid-game: dealt a card and added to the rotation. */
+async function joinAsNewPlayer() {
+  const { room: r, name } = pendingJoin;
+  rejoinError("");
+  try {
+    const songs = SONGS;
+    await r.transact(cur => {
+      if (!cur) return cur;
+      const players = cur.players || (cur.players = {});
+      if (Object.values(players).some(
+            q => (q.name || "").toLowerCase() === name.toLowerCase() && q.id !== myId)) {
+        throw new Error("Someone in this room is already using that name.");
+      }
+      // Deal from the far end of the deck, so the song currently being played
+      // and the ones queued behind it are left alone.
+      const d = C.seededShuffle(songs, cur.seed);
+      const held = new Set();
+      for (const q of Object.values(players)) for (const id of vals(q.cards)) held.add(id);
+      cur.extraDeals = (cur.extraDeals || 0) + 1;
+      let card = null;
+      for (let k = cur.extraDeals; k <= d.length; k++) {
+        const cand = d[d.length - k];
+        if (cand && !held.has(cand.id)) { card = cand; cur.extraDeals = k; break; }
+      }
+      const order = Math.max(-1, ...Object.values(players).map(q => q.order || 0)) + 1;
+      players[myId] = {
+        id: myId, name, order, ready: true,
+        cards: card ? [card.id] : [], tokens: 0, nameHits: 0, rounds: 0, online: true,
+      };
+      return cur;
+    });
+    stopRejoinPoll();
+    await r.attach();
+    pendingJoin = null;
+    attachRoom(r, { skipLobbyScreen: true });
+  } catch (err) {
+    rejoinError(friendly(err));
   }
 }
 
@@ -226,7 +429,7 @@ function setBusy(on) {
   $("btn-create").textContent = on ? "Working…" : "Start a new room";
 }
 
-function attachRoom(r) {
+function attachRoom(r, opts = {}) {
   room = r;
   $("room-pill-code").textContent = r.code;
   $("lobby-code").textContent = r.code;
@@ -238,7 +441,7 @@ function attachRoom(r) {
     G = state;
     render();
   });
-  show("screen-lobby");
+  if (!opts.skipLobbyScreen) show("screen-lobby");
 }
 
 async function leaveRoom(msg) {
@@ -319,6 +522,11 @@ async function beginGame() {
 /* ═════════════════════════ THE ROUND ═════════════════════════ */
 function boardOf(p) { return C.sortBoard(cardsOf(p)); }
 
+function clearAnswers() {
+  $("in-title").value = "";
+  $("in-artist").value = "";
+}
+
 async function chooseSlot(i) {
   if (!isMine() || G.phase !== "playing") return;
   await mutate(cur => { cur.pick = i; return cur; });
@@ -329,6 +537,7 @@ async function submit() {
   const song = currentSong();
   const titleIn = $("in-title").value.trim();
   const artistIn = $("in-artist").value.trim();
+  clearAnswers();                  // don't carry a guess into the next round
   const naming = G.settings.naming !== false;
   const result = C.judge({
     song, board: boardOf(player(myId)), slot: G.pick,
@@ -728,6 +937,7 @@ function armForRound() {
   $("scrub-fill").style.width = "0%";
   $("player-label").textContent = `Round ${G.round} — press play`;
   $("player-sub").textContent = P.previewLen ? `${P.previewLen}-second clip` : "30-second preview";
+  clearAnswers();
   armAudio(currentSong());
   const nxt = songAt(G.deckIdx + 1);
   if (nxt) resolveSrc(nxt).catch(() => {});
@@ -806,6 +1016,14 @@ $("in-code").addEventListener("input", e => { e.target.value = e.target.value.to
 $("btn-ready").addEventListener("click", () => toggleReady());
 $("btn-begin").addEventListener("click", beginGame);
 $("btn-leave-lobby").addEventListener("click", () => leaveRoom());
+$("btn-join-new").addEventListener("click", joinAsNewPlayer);
+$("btn-rejoin-pick").addEventListener("click", showRejoinList);
+$("btn-rejoin-back").addEventListener("click", showRejoinChoice);
+$("btn-rejoin-cancel").addEventListener("click", () => {
+  stopRejoinPoll();
+  pendingJoin = null;
+  show("screen-join");
+});
 $("btn-copy-link").addEventListener("click", async () => {
   const url = location.href.split("#")[0];
   try { await navigator.clipboard.writeText(url); $("btn-copy-link").textContent = "Link copied"; }
@@ -883,7 +1101,8 @@ document.addEventListener("keydown", e => {
     if (owner && i <= boardOf(owner).length) chooseSlot(i);
   }
 });
-window.addEventListener("pagehide", () => { if (room) room.leave(); });
+// Keep the disconnect handler armed on teardown; it is what marks us offline.
+window.addEventListener("pagehide", () => { if (room) room.detach(); });
 
 /* ═══════════════════════ BOOT ═══════════════════════ */
 (function boot() {

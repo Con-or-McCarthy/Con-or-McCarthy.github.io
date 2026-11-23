@@ -83,7 +83,10 @@ kbd{background:var(--surf-3); border:1px solid var(--line); border-bottom-width:
 
 /* ───────────── screens ───────────── */
 .screen{flex:1; display:flex; flex-direction:column; min-height:0}
-#screen-setup{align-items:center; justify-content:center; padding:2rem 1rem; overflow-y:auto}
+/* every pre-game screen centres its card */
+#screen-mode,#screen-join,#screen-rejoin,#screen-lobby,#screen-setup{
+  align-items:center; justify-content:center; padding:2rem 1rem; overflow-y:auto;
+}
 #screen-game{overflow-y:auto}
 
 .setup-card{
@@ -389,3 +392,19 @@ kbd{background:var(--surf-3); border:1px solid var(--line); border-bottom-width:
   .room-pill{display:none}
   .lb{min-width:72px; padding:.35rem .55rem}
 }
+
+/* ───────────── rejoining a running game ───────────── */
+.rejoin-prompt{font-size:.85rem; margin:1.1rem 0 .5rem}
+.rejoin-option{padding:0; background:none; border:none}
+.rejoin-btn{
+  font:inherit; color:var(--tx); cursor:pointer; width:100%; text-align:left;
+  display:flex; align-items:center; gap:.7rem;
+  padding:.6rem .8rem; border-radius:var(--r-sm);
+  border:1px solid var(--line); background:var(--surf);
+  transition:border-color .15s, background .15s;
+}
+.rejoin-btn:hover{background:var(--surf-3); border-color:var(--amber)}
+.rejoin-btn:focus-visible{outline:2px solid var(--amber); outline-offset:2px}
+.rejoin-btn .lp-name{flex:1; font-weight:600}
+.rejoin-btn .lp-state{color:var(--tx-dim); text-transform:none; letter-spacing:0; font-size:.76rem}
+#rejoin-list-wrap[hidden],#rejoin-choice[hidden]{display:none}

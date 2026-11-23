@@ -89,6 +89,40 @@
   </section>
 </main>
 
+<!-- ──────────────────── Joining a game already running ──────────────────── -->
+<main id="screen-rejoin" class="screen" hidden>
+  <section class="setup-card">
+    <h2>Game in progress</h2>
+    <p class="muted">Room <span class="code-big" id="rejoin-code">----</span> has already
+      started. You can come in fresh, or pick up where someone who dropped out left off.</p>
+
+    <div class="mode-grid" id="rejoin-choice">
+      <button class="mode-btn" id="btn-join-new">
+        <span class="mode-ico" aria-hidden="true">＋</span>
+        <b>Join as a new person</b>
+        <small>You get a card dealt and slot into the rotation</small>
+      </button>
+      <button class="mode-btn mode-btn-alt" id="btn-rejoin-pick">
+        <span class="mode-ico" aria-hidden="true">↩</span>
+        <b>Rejoin match</b>
+        <small id="rejoin-count">Continue as someone who dropped out</small>
+      </button>
+    </div>
+
+    <div id="rejoin-list-wrap" hidden>
+      <p class="muted rejoin-prompt">Who are you continuing as?</p>
+      <ul class="lobby-players" id="rejoin-list"></ul>
+      <p class="fineprint" id="rejoin-empty" hidden>Nobody is showing as dropped out yet &mdash;
+        it takes a few seconds for a closed browser to register. This list updates
+        on its own.</p>
+      <button class="btn btn-ghost btn-sm" id="btn-rejoin-back">Back to the two options</button>
+    </div>
+
+    <p class="form-error" id="rejoin-error" hidden></p>
+    <button class="btn btn-ghost btn-sm" id="btn-rejoin-cancel">Cancel</button>
+  </section>
+</main>
+
 <!-- ─────────────────────────── Lobby ─────────────────────────── -->
 <main id="screen-lobby" class="screen" hidden>
   <section class="setup-card setup-wide">
