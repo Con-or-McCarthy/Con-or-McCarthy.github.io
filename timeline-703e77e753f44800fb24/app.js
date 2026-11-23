@@ -40,22 +40,27 @@ const BANKS = Object.keys(BANK_LABELS)
   })
   .filter(Boolean);
 
-const bankOr = id => BANKS.find(b => b.id === id) || BANKS.find(b => b.id === DEFAULT_BANK) || BANKS[0];
+const NO_BANK = { id: DEFAULT_BANK, label: BANK_LABELS[DEFAULT_BANK], songs: [],
+                  min: 0, max: 0, years: 0 };
+const bankOr = id => BANKS.find(b => b.id === id)
+                  || BANKS.find(b => b.id === DEFAULT_BANK) || BANKS[0] || NO_BANK;
 /** The deck this game is playing. */
-const songsFor = id => (bankOr(id) || { songs: [] }).songs;
+const songsFor = id => bankOr(id).songs;
 const gameBank = () => (G && G.settings && G.settings.bank) || DEFAULT_BANK;
-const SONGS = songsFor(DEFAULT_BANK);
 
-/** Fill a <select> with the decks on offer, and remember the last choice. */
-const BANK_PREF_KEY = "timeline.bank.v1";
+/** Fill a <select> with the decks on offer, starting from the last choice. */
 function fillBankSelect(sel, chosen) {
   if (!sel) return;
-  sel.innerHTML = "";
-  for (const b of BANKS) {
-    const o = document.createElement("option");
-    o.value = b.id;
-    o.textContent = `${b.label} — ${b.songs.length} songs, ${b.min}–${b.max}`;
-    sel.appendChild(o);
+  const want = BANKS.map(b => b.id).join(",");
+  if (sel.dataset.banks !== want) {
+    sel.dataset.banks = want;
+    sel.innerHTML = "";
+    for (const b of BANKS) {
+      const o = document.createElement("option");
+      o.value = b.id;
+      o.textContent = `${b.label} — ${b.songs.length} songs, ${b.min}–${b.max}`;
+      sel.appendChild(o);
+    }
   }
   sel.value = chosen || P.bank || DEFAULT_BANK;
   if (!sel.value) sel.value = (BANKS[0] || {}).id || DEFAULT_BANK;
@@ -64,7 +69,7 @@ function fillBankSelect(sel, chosen) {
 
 /* ──────────────── this device's own preferences ──────────────── */
 const PREFS_KEY = "timeline.prefs.v1";
-const P = Object.assign({ previewLen: 0, volume: 0.8, strict: 0.82 }, (() => {
+const P = Object.assign({ previewLen: 0, volume: 0.8, strict: 0.82, bank: DEFAULT_BANK }, (() => {
   try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; } catch (_) { return {}; }
 })());
 const savePrefs = () => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(P)); } catch (_) {} };
@@ -77,7 +82,7 @@ let room = null;         // a net.Room when multiplayer, else null
 let myId = "solo";
 let myName = "You";
 let net = null;          // the lazily imported net.js module
-let deckCache = { seed: null, deck: [] };
+let deckCache = { seed: null, bank: null, deck: [] };
 let lastDeckIdx = -1;
 let endShownFor = null;
 let freshId = null;                 // card to animate in, once
@@ -88,7 +93,10 @@ const isMine = () => !G || G.turn === myId;
 const isHost = () => !G || G.hostId === myId || !multiplayer();
 
 function deck() {
-  if (deckCache.seed !== G.seed) deckCache = { seed: G.seed, deck: C.seededShuffle(SONGS, G.seed) };
+  const bank = gameBank();
+  if (deckCache.seed !== G.seed || deckCache.bank !== bank) {
+    deckCache = { seed: G.seed, bank, deck: C.seededShuffle(songsFor(bank), G.seed) };
+  }
   return deckCache.deck;
 }
 const songAt = i => deck()[i % deck().length];
@@ -139,7 +147,8 @@ function show(id) {
 function soloSetup() {
   room = null; myId = "solo"; G = null;
   resetDealStage();
-  $("btn-start").disabled = !SONGS.length;
+  fillBankSelect($("opt-bank-solo"));
+  $("btn-start").disabled = !BANKS.length;
   show("screen-setup");
 }
 
@@ -156,11 +165,14 @@ function startSolo() {
   G = {
     phase: "playing", seed, hostId: "solo", turn: "solo", round: 1,
     settings: { target: intOr($("opt-target-solo").value, 10),
-                naming: $("opt-naming-solo").value === "on" },
+                naming: $("opt-naming-solo").value === "on",
+                bank: bankOr($("opt-bank-solo").value).id },
     players: { solo: { id: "solo", name: "You", order: 0, cards: [], tokens: 0,
                        nameHits: 0, rounds: 0, streak: 0, best: 0, online: true } },
     deckIdx: 0, pick: null, result: null, aliases: {},
   };
+  P.bank = G.settings.bank;
+  savePrefs();
   const first = deck()[0];
   G.players.solo.cards = [first.id];
   G.deckIdx = 1;
@@ -216,7 +228,8 @@ async function createRoom() {
       const code = n.makeCode(4);
       const r = new n.Room(code, myId);
       try {
-        await r.create(name, { target: 10, naming: true, seed: C.newSeed() });
+        await r.create(name, { target: 10, naming: true,
+                               bank: bankOr(P.bank).id, seed: C.newSeed() });
         attachRoom(r);
         return;
       } catch (err) {
@@ -377,10 +390,12 @@ async function joinAsNewPlayer() {
   const { room: r, name } = pendingJoin;
   rejoinError("");
   try {
-    const songs = SONGS;
     await r.transact(cur => {
       if (!cur) return cur;
       const players = cur.players || (cur.players = {});
+      // Read the deck off the room rather than off whatever was inspected a
+      // moment ago, so the card dealt comes from the deck being played.
+      const songs = songsFor(cur.settings && cur.settings.bank);
       if (Object.values(players).some(
             q => (q.name || "").toLowerCase() === name.toLowerCase() && q.id !== myId)) {
         throw new Error("Someone in this room is already using that name.");
@@ -474,7 +489,12 @@ function renderLobby() {
   if (host) {
     $("opt-target").value = String((G.settings && G.settings.target) ?? 10);
     $("opt-naming").value = (G.settings && G.settings.naming) === false ? "off" : "on";
+    fillBankSelect($("opt-bank"), G.settings && G.settings.bank);
   }
+  // everyone else is told which deck they are in for
+  const lb = bankOr(G.settings && G.settings.bank);
+  $("lobby-bank").hidden = host || BANKS.length < 2;
+  if (!$("lobby-bank").hidden) $("lobby-bank").textContent = `Playing the ${lb.label.toLowerCase()}.`;
 
   const online = ps.filter(p => p.online);
   const allReady = online.length > 0 && online.every(p => p.ready);
@@ -496,10 +516,13 @@ async function toggleReady() {
 async function beginGame() {
   const target = intOr($("opt-target").value, 10);
   const naming = $("opt-naming").value === "on";
+  const bank = bankOr($("opt-bank").value).id;
+  P.bank = bank;
+  savePrefs();
   await mutate(cur => {
     const ps = vals(cur.players).filter(p => p.online).sort((a, b) => a.order - b.order);
     if (!ps.length) return cur;
-    const d = C.seededShuffle(SONGS, cur.seed);
+    const d = C.seededShuffle(songsFor(bank), cur.seed);
     ps.forEach((p, i) => {
       cur.players[p.id].order = i;
       cur.players[p.id].cards = [d[i].id];
@@ -508,7 +531,7 @@ async function beginGame() {
       cur.players[p.id].rounds = 0;
     });
     for (const p of vals(cur.players)) if (!p.online) delete cur.players[p.id];
-    cur.settings = Object.assign({}, cur.settings, { target, naming });
+    cur.settings = Object.assign({}, cur.settings, { target, naming, bank });
     cur.deckIdx = ps.length;
     cur.turn = ps[0].id;
     cur.round = 1;
@@ -1030,11 +1053,14 @@ $("btn-copy-link").addEventListener("click", async () => {
   catch (_) { $("btn-copy-link").textContent = url; }
   setTimeout(() => { $("btn-copy-link").textContent = "Copy the link"; }, 2500);
 });
-for (const id of ["opt-target", "opt-naming"]) {
+for (const id of ["opt-target", "opt-naming", "opt-bank"]) {
   $(id).addEventListener("change", () => {
-    if (multiplayer() && isHost()) {
+    // Lobby only: changing the deck once the cards are dealt would reshuffle
+    // the running order underneath a game in progress.
+    if (multiplayer() && isHost() && G && G.phase === "lobby") {
       room.update({ settings: { target: intOr($("opt-target").value, 10),
                                 naming: $("opt-naming").value === "on",
+                                bank: bankOr($("opt-bank").value).id,
                                 seed: G.settings.seed } });
     }
   });
@@ -1108,13 +1134,13 @@ window.addEventListener("pagehide", () => { if (room) room.detach(); });
 (function boot() {
   document.body.dataset.booted = "1";
   const fp = $("setup-fineprint");
-  if (!SONGS.length) {
+  if (!BANKS.length) {
     fp.innerHTML = "<strong>No song data found.</strong> Run the build scripts in <code>build/</code>.";
     $("btn-solo").disabled = $("btn-multi").disabled = true;
   } else {
-    const years = new Set(SONGS.map(s => s.year));
-    fp.textContent = `${SONGS.length} songs, ${SONG_MIN}–${SONG_MAX} (${years.size} years). `
-      + "Clips are 30-second previews streamed from Apple and Deezer.";
+    fp.textContent = BANKS.map(b =>
+        `${b.label}: ${b.songs.length} songs, ${b.min}–${b.max} (${b.years} years)`).join(". ")
+      + ". Clips are 30-second previews streamed from Apple and Deezer.";
   }
   const code = new URLSearchParams(location.search).get("room");
   if (code) { show("screen-join"); $("in-code").value = code.toUpperCase(); }

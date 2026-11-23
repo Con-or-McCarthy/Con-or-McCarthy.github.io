@@ -135,6 +135,10 @@
 
     <div class="setup-fields" id="lobby-settings">
       <label class="field">
+        <span>Songs</span>
+        <select id="opt-bank"></select>
+      </label>
+      <label class="field">
         <span>Cards needed to win</span>
         <select id="opt-target">
           <option value="5">5 &mdash; quick</option>
@@ -156,6 +160,7 @@
       <button class="btn btn-lg" id="btn-ready">I'm ready</button>
       <button class="btn btn-primary btn-lg" id="btn-begin" hidden>Begin</button>
     </div>
+    <p class="fineprint" id="lobby-bank" hidden></p>
     <p class="fineprint" id="lobby-note">Waiting for players&hellip;</p>
     <button class="btn btn-ghost btn-sm" id="btn-leave-lobby">Leave room</button>
   </section>
@@ -172,6 +177,10 @@
       <div class="deal-placeholder" id="deal-placeholder"><span class="deal-note">?</span></div>
     </div>
     <div class="setup-fields">
+      <label class="field">
+        <span>Songs</span>
+        <select id="opt-bank-solo"></select>
+      </label>
       <label class="field">
         <span>Cards needed to win</span>
         <select id="opt-target-solo">
